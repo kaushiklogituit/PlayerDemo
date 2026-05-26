@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="stream_teal_light">#FF80CBC4</color>
+    <color name="stream_teal_dark">#FF00695C</color>
+    <color name="stream_indigo_light">#FF9FA8DA</color>
+    <color name="stream_indigo_dark">#FF283593</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+</resources>

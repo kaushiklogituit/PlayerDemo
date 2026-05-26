@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Required for HLS/DASH segment fetching and manifest downloads -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Used to tailor buffering strategy based on connection type (WiFi vs cellular) -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <application
+        android:name=".PlayerApplication"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.StreamVault">
+
+        <!--
+            configChanges declared here so the Activity is not recreated on rotation.
+            Without this, the ExoPlayer instance would be torn down on every orientation
+            change, causing a visible buffering stall and wasted network bandwidth.
+
+            screenOrientation="fullSensor" lets the sensor drive portrait/landscape freely;
+            PlaybackRoot programmatically requests LANDSCAPE on entry and resets on exit.
+        -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden"
+            android:screenOrientation="fullSensor"
+            android:supportsPictureInPicture="true"
+            android:theme="@style/Theme.StreamVault">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>
