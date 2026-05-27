@@ -1,6 +1,6 @@
 package com.example.exoplayerdummy.player.network
 
-import android.util.Log
+import com.example.exoplayerdummy.AppLogger as Log
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.HttpDataSource
@@ -23,7 +23,7 @@ class AdaptiveRetryPolicy : LoadErrorHandlingPolicy {
         val attempt = loadErrorInfo.errorCount
         val dataType = loadErrorInfo.mediaLoadData.dataType
 
-        Log.w(TAG, "Load error #$attempt [${dataTypeName(dataType)}]: ${error.message}")
+        Log.w(TAG, "Load error #$attempt [${dataTypeName(dataType)}], uri=${loadErrorInfo.loadEventInfo.uri}, duration=${loadErrorInfo.loadEventInfo.loadDurationMs}ms: ${error.message}", error)
 
         if (error is HttpDataSource.HttpDataSourceException) {
             val statusCode = (error.cause as? HttpDataSource.InvalidResponseCodeException)?.responseCode ?: -1

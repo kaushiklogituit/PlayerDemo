@@ -1,10 +1,11 @@
 package com.example.exoplayerdummy.player.analytics
-
-import android.util.Log
+import androidx.media3.common.Format
+import com.example.exoplayerdummy.AppLogger as Log
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.source.LoadEventInfo
 import androidx.media3.exoplayer.source.MediaLoadData
@@ -90,7 +91,7 @@ class PlaybackEventTracker : AnalyticsListener {
     }
 
     override fun onPlayerError(eventTime: AnalyticsListener.EventTime, error: PlaybackException) {
-        Log.e(TAG, "Playback error [${error.errorCodeName}] (code=${error.errorCode}): ${error.message}")
+        Log.e(TAG, "Playback error [${error.errorCodeName}] (code=${error.errorCode}) at pos=${eventTime.currentPlaybackPositionMs}ms: ${error.message}", error)
         when {
             error.errorCode in 1000..1999 -> Log.e(TAG, "Category: I/O / network error")
             error.errorCode in 2000..2999 -> Log.e(TAG, "Category: Content / format error")
@@ -127,6 +128,14 @@ class PlaybackEventTracker : AnalyticsListener {
         mediaLoadData: MediaLoadData
     ) {
         Log.v(TAG, "Load done: ${loadEventInfo.bytesLoaded / 1024}KB in ${loadEventInfo.loadDurationMs}ms")
+    }
+
+    override fun onVideoInputFormatChanged(
+        eventTime: AnalyticsListener.EventTime,
+        format: Format,
+        decoderReuseEvaluation: DecoderReuseEvaluation?
+    ) {
+        super.onVideoInputFormatChanged(eventTime, format, decoderReuseEvaluation)
     }
 
     fun resetSession() {

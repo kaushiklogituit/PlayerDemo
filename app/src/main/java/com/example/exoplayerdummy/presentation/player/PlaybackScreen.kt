@@ -3,7 +3,7 @@ package com.example.exoplayerdummy.presentation.player
 import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
-import android.util.Log
+import com.example.exoplayerdummy.AppLogger as Log
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.compose.animation.*
@@ -59,6 +59,8 @@ import com.example.exoplayerdummy.domain.model.StreamProtocol
 import com.example.exoplayerdummy.domain.model.Video
 import com.example.exoplayerdummy.player.controller.TrackInfo
 import com.example.exoplayerdummy.ui.theme.*
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
 import java.util.Locale
 
@@ -78,6 +80,7 @@ fun PlaybackRoot(
 
     // Full immersive — hide both status bar and nav bar
     DisposableEffect(Unit) {
+        Log.d(TAG, "Entering immersive playback UI")
         val win = (context as? Activity)?.window
         win?.let { w ->
             WindowCompat.setDecorFitsSystemWindows(w, false)
@@ -88,6 +91,7 @@ fun PlaybackRoot(
             }
         }
         onDispose {
+            Log.d(TAG, "Exiting immersive playback UI")
             win?.let { w ->
                 WindowCompat.getInsetsController(w, w.decorView)
                     .show(WindowInsetsCompat.Type.systemBars())
@@ -96,16 +100,43 @@ fun PlaybackRoot(
     }
 
     LaunchedEffect(video.id) {
-        Log.i(TAG, "Loading ${video.title}")
+        Log.i(TAG, "Loading ${video.title} (id=${video.id}) and forcing landscape orientation")
         (context as? Activity)?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         viewModel.onAction(PlaybackContract.Action.LoadVideo(video))
+    }
+    val scope = rememberCoroutineScope()
+    var isExiting by remember { mutableStateOf(false) }
+
+    val handleBack: () -> Unit = {
+        Log.i(TAG, "Back tapped — restoring orientation before navigation")
+        isExiting = true
+       
+        viewModel.playbackController.player?.setVideoSurface(null)
+
+        // 2. Stop player
+        viewModel.onAction(PlaybackContract.Action.StopPlayback)
+
+        // 3. Restore orientation first, wait for it to settle, THEN navigate
+        (context as? Activity)?.requestedOrientation =
+            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+
+        scope.launch {  // or use a coroutine scope available here
+            delay(150)           // give Android time to rotate back
+            onNavigateBack()
+        }                                   // ← then navigate
     }
 
     DisposableEffect(lifecycleOwner) {
         val obs = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_PAUSE  -> viewModel.onAction(PlaybackContract.Action.OnPause)
-                Lifecycle.Event.ON_RESUME -> viewModel.onAction(PlaybackContract.Action.OnResume)
+                Lifecycle.Event.ON_PAUSE  -> {
+                    Log.d(TAG, "Lifecycle ON_PAUSE observed")
+                    viewModel.onAction(PlaybackContract.Action.OnPause)
+                }
+                Lifecycle.Event.ON_RESUME -> {
+                    Log.d(TAG, "Lifecycle ON_RESUME observed")
+                    viewModel.onAction(PlaybackContract.Action.OnResume)
+                }
                 else -> {}
             }
         }
@@ -115,19 +146,29 @@ fun PlaybackRoot(
 
     DisposableEffect(Unit) {
         onDispose {
-            viewModel.onAction(PlaybackContract.Action.StopPlayback)
-            (context as? Activity)?.requestedOrientation =
-                ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+            Log.i(TAG, "PlaybackRoot disposed — stopping playback and restoring orientation")
+
         }
     }
 
-    PlaybackScreen(
-        state          = state,
-        player         = viewModel.playbackController.player,
-        video          = video,
-        onAction       = viewModel::onAction,
-        onNavigateBack = onNavigateBack
-    )
+    Box(modifier = Modifier.fillMaxSize()) {
+        PlaybackScreen(
+            state          = state,
+            player         = viewModel.playbackController.player,
+            video          = video,
+            onAction       = viewModel::onAction,
+            onNavigateBack = handleBack
+        )
+
+        // Black curtain — drops instantly when exiting, hides the white flash
+        if (isExiting) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+            )
+        }
+    }
 }
 
 // ─── Screen dispatcher ────────────────────────────────────────────────────────
@@ -144,11 +185,6 @@ fun PlaybackScreen(
 
     if (isLandscape) {
         LandscapeImmersivePlayer(
-            state = state, player = player, video = video,
-            onAction = onAction, onNavigateBack = onNavigateBack
-        )
-    } else {
-        PortraitPlayerView(
             state = state, player = player, video = video,
             onAction = onAction, onNavigateBack = onNavigateBack
         )
@@ -171,7 +207,12 @@ fun VideoSurfaceComposable(player: ExoPlayer?, modifier: Modifier = Modifier) {
                 setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
             }
         },
-        update  = { pv -> pv.player = player },
+        update  = { pv ->
+            if (pv.player !== player) {
+                Log.d(TAG, "Binding PlayerView to player=${player != null}")
+            }
+            pv.player = player
+        },
         modifier = modifier.background(Color.Black)
     )
 }
@@ -190,10 +231,17 @@ private fun LandscapeImmersivePlayer(
 ) {
     var showOverlay  by remember { mutableStateOf(true) }
     var showSettings by remember { mutableStateOf(false) }
-
+    var isSeeking    by remember { mutableStateOf(false) }
     // Auto-hide overlay 3.5s after it becomes visible (only while playing, not in settings)
     LaunchedEffect(showOverlay, state.isPlaying, showSettings) {
         if (showOverlay && state.isPlaying && !showSettings) {
+            kotlinx.coroutines.delay(3_500)
+            showOverlay = false
+        }
+    }
+
+    LaunchedEffect(showOverlay, state.isPlaying, showSettings, isSeeking) {  // ← ADD isSeeking
+        if (showOverlay && state.isPlaying && !showSettings && !isSeeking) { // ← ADD !isSeeking
             kotlinx.coroutines.delay(3_500)
             showOverlay = false
         }
@@ -205,7 +253,10 @@ private fun LandscapeImmersivePlayer(
             .background(Color.Black)
             .pointerInput(Unit) {
                 detectTapGestures {
-                    if (!showSettings) showOverlay = !showOverlay
+                    if (!showSettings) {
+                        showOverlay = !showOverlay
+                        Log.d(TAG, "Landscape overlay ${if (showOverlay) "shown" else "hidden"} by tap")
+                    }
                 }
             }
     ) {
@@ -238,7 +289,10 @@ private fun LandscapeImmersivePlayer(
                             .graphicsLayer(scaleX = scale, scaleY = scale)
                             .clip(CircleShape)
                             .background(VaultRed.copy(alpha = 0.92f))
-                            .clickable { onAction(PlaybackContract.Action.TogglePlayPause) },
+                            .clickable {
+                                Log.d(TAG, "Landscape center play/pause tapped")
+                                onAction(PlaybackContract.Action.TogglePlayPause)
+                            },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -295,7 +349,10 @@ private fun LandscapeImmersivePlayer(
                         .padding(horizontal = 14.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    GhostIconBtn(Icons.AutoMirrored.Filled.ArrowBack) { onNavigateBack() }
+                    GhostIconBtn(Icons.AutoMirrored.Filled.ArrowBack) {
+                        Log.i(TAG, "Landscape back tapped")
+                        onNavigateBack()
+                    }
                     Spacer(Modifier.width(10.dp))
                     Text(
                         video.title,
@@ -310,7 +367,11 @@ private fun LandscapeImmersivePlayer(
                         LiveBadge()
                         Spacer(Modifier.width(10.dp))
                     }
-                    GhostIconBtn(Icons.Filled.Tune) { showSettings = true; showOverlay = true }
+                    GhostIconBtn(Icons.Filled.Tune) {
+                        Log.d(TAG, "Landscape settings opened")
+                        showSettings = true
+                        showOverlay = true
+                    }
                 }
 
                 // Bottom controls
@@ -322,7 +383,7 @@ private fun LandscapeImmersivePlayer(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     // Seek bar
-                    if (!state.isLiveStream) {
+                    if (!state.isLiveStream || state.isLiveSeekable) {
                         VaultSeekBar(
                             position = state.positionMs,
                             duration = state.durationMs,
@@ -341,6 +402,18 @@ private fun LandscapeImmersivePlayer(
                                 color = VaultWhite.copy(.75f),
                                 style = MaterialTheme.typography.labelMedium
                             )
+                        } else if (state.isLiveSeekable) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "DVR ${formatDuration(state.positionMs)}  /  ${formatDuration(state.durationMs)}",
+                                    color = VaultWhite.copy(.75f),
+                                    style = MaterialTheme.typography.labelMedium
+                                )
+                                LiveEdgeButton { onAction(PlaybackContract.Action.SeekToLiveEdge) }
+                            }
                         } else {
                             LiveEdgeButton { onAction(PlaybackContract.Action.SeekToLiveEdge) }
                         }
@@ -374,7 +447,10 @@ private fun LandscapeImmersivePlayer(
             LandscapeSettingsPanel(
                 state     = state,
                 video     = video,
-                onDismiss = { showSettings = false },
+                onDismiss = {
+                    Log.d(TAG, "Landscape settings dismissed")
+                    showSettings = false
+                },
                 onAction  = onAction
             )
         }
@@ -528,195 +604,6 @@ private fun LandscapeSettingsPanel(
 // PORTRAIT PLAYER — VIDEO + TABBED DETAIL
 // ─────────────────────────────────────────────────────────────────────────────
 
-@Composable
-private fun PortraitPlayerView(
-    state: PlaybackContract.State,
-    player: ExoPlayer?,
-    video: Video,
-    onAction: (PlaybackContract.Action) -> Unit,
-    onNavigateBack: () -> Unit
-) {
-    val context = LocalContext.current
-    var tab by remember { mutableIntStateOf(0) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(VaultBlack)
-    ) {
-        // ── Video surface ────────────────────────────────────────────────────
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(16f / 9f)
-        ) {
-            VideoSurfaceComposable(player = player, modifier = Modifier.fillMaxSize())
-
-            // Back button
-            IconButton(
-                onClick  = onNavigateBack,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(8.dp)
-                    .size(38.dp)
-                    .clip(CircleShape)
-                    .background(Color.Black.copy(.55f))
-            ) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = VaultWhite, modifier = Modifier.size(18.dp))
-            }
-
-            // Fullscreen
-            IconButton(
-                onClick = {
-                    (context as? Activity)?.requestedOrientation =
-                        ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-                },
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(8.dp)
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .background(Color.Black.copy(.45f))
-            ) {
-                Icon(Icons.Filled.Fullscreen, null, tint = VaultWhite, modifier = Modifier.size(18.dp))
-            }
-
-            // Center: buffering OR play-pause — never both
-            AnimatedContent(
-                targetState  = state.playerStateName == "BUFFERING",
-                transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(180)) },
-                label        = "centerPortrait",
-                modifier     = Modifier.align(Alignment.Center)
-            ) { isBuffering ->
-                if (isBuffering) {
-                    CircularProgressIndicator(
-                        color       = VaultRed,
-                        strokeWidth = 3.dp,
-                        modifier    = Modifier.size(44.dp)
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .size(52.dp)
-                            .clip(CircleShape)
-                            .background(Color.Black.copy(.55f))
-                            .clickable { onAction(PlaybackContract.Action.TogglePlayPause) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                            null, tint = VaultWhite, modifier = Modifier.size(28.dp)
-                        )
-                    }
-                }
-            }
-        }
-
-        // ── Seek bar + controls (persistent, outside tabs) ──────────────────
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(VaultSurface)
-                .padding(horizontal = 20.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            if (!state.isLiveStream && state.durationMs > 0) {
-                VaultSeekBar(
-                    position = state.positionMs,
-                    duration = state.durationMs,
-                    buffered = state.bufferedPercent,
-                    onSeek   = { onAction(PlaybackContract.Action.SeekTo(it)) }
-                )
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(formatDuration(state.positionMs), color = VaultTextSecond, style = MaterialTheme.typography.labelMedium)
-                    Text(formatDuration(state.durationMs), color = VaultTextSecond, style = MaterialTheme.typography.labelMedium)
-                }
-            } else if (state.isLiveStream) {
-                LiveEdgeButton { onAction(PlaybackContract.Action.SeekToLiveEdge) }
-            }
-
-            // Controls row — spacious
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceAround,
-                verticalAlignment     = Alignment.CenterVertically
-            ) {
-                ControlBtn(Icons.Filled.Replay10)  { onAction(PlaybackContract.Action.SeekBack) }
-                ControlBtn(Icons.Filled.Forward10) { onAction(PlaybackContract.Action.SeekForward) }
-                ControlBtn(
-                    if (state.isMuted) Icons.AutoMirrored.Filled.VolumeOff
-                    else Icons.AutoMirrored.Filled.VolumeUp,
-                    tint = if (state.isMuted) VaultTextSecond else VaultTextPrimary
-                ) { onAction(PlaybackContract.Action.ToggleMute) }
-            }
-        }
-
-        // ── Tab row ──────────────────────────────────────────────────────────
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(VaultSurface)
-        ) {
-            listOf("Overview", "Tracks", "Settings").forEachIndexed { i, title ->
-                val sel = tab == i
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable { tab = i }
-                        .padding(vertical = 12.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        title,
-                        color      = if (sel) VaultRed else VaultTextSecond,
-                        fontSize   = 12.sp,
-                        fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Box(
-                        modifier = Modifier
-                            .height(2.dp)
-                            .fillMaxWidth(if (sel) 0.7f else 0f)
-                            .background(VaultRed, RoundedCornerShape(1.dp))
-                    )
-                }
-            }
-        }
-        HorizontalDivider(color = VaultDivider, thickness = 1.dp)
-
-        // ── Tab content ──────────────────────────────────────────────────────
-        AnimatedContent(
-            targetState  = tab,
-            transitionSpec = {
-                val dir = if (targetState > initialState) 1 else -1
-                slideInHorizontally(tween(240)) { dir * it } + fadeIn(tween(200)) togetherWith
-                        slideOutHorizontally(tween(200)) { -dir * it } + fadeOut(tween(160))
-            },
-            label    = "tabContent",
-            modifier = Modifier
-                .weight(1f)
-                .background(VaultBlack)
-        ) { selectedTab ->
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(20.dp)
-            ) {
-                when (selectedTab) {
-                    0 -> OverviewContent(state = state, video = video)
-                    1 -> TracksContent(state = state, onAction = onAction)
-                    2 -> Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
-                        SpeedContent(state = state, onAction = onAction)
-                        BitrateContent(state = state, onAction = onAction)
-                    }
-                }
-            }
-        }
-    }
-}
 
 @Composable
 private fun ControlBtn(icon: ImageVector, tint: Color = VaultTextPrimary, onClick: () -> Unit) {
@@ -757,6 +644,7 @@ private fun OverviewContent(state: PlaybackContract.State, video: Video) {
             "Captions"   to state.selectedCaptionLabel,
             "Speed"      to "${state.playbackSpeed}×",
             "Buffered"   to "${state.bufferedPercent}%",
+            "Live Delay" to if (state.isLiveStream) formatDuration(state.liveOffsetMs) else "N/A",
             "Muted"      to if (state.isMuted) "Yes" else "No"
         ).chunked(2).forEach { pair ->
             Row(modifier = Modifier.fillMaxWidth()) {
@@ -797,11 +685,15 @@ private fun TracksContent(
             autoLabel = "Auto (ABR)",
             autoSelected = state.selectedQualityLabel == "Auto",
             onAuto    = { onAction(PlaybackContract.Action.SetAutoQuality) }
-        ) {
+        )
+        {
             state.videoTracks.forEach { t ->
                 TrackPill(
                     label    = t.label,
-                    selected = t.label == state.selectedQualityLabel || (state.selectedQualityLabel != "Auto" && t.isSelected),
+                    selected = t.matchesSelectedTrack(
+                        groupIndex = state.selectedQualityGroupIndex,
+                        trackIndex = state.selectedQualityTrackIndex
+                    ),
                     onClick  = { onAction(PlaybackContract.Action.SelectVideoTrack(t)) }
                 )
             }
@@ -815,7 +707,10 @@ private fun TracksContent(
             state.audioTracks.forEach { t ->
                 TrackPill(
                     label    = t.label,
-                    selected = t.label == state.selectedAudioLabel || t.isSelected,
+                    selected = t.matchesSelectedTrack(
+                        groupIndex = state.selectedAudioGroupIndex,
+                        trackIndex = state.selectedAudioTrackIndex
+                    ),
                     onClick  = { onAction(PlaybackContract.Action.SelectAudioTrack(t)) }
                 )
             }
@@ -834,7 +729,10 @@ private fun TracksContent(
             state.captionTracks.forEach { t ->
                 TrackPill(
                     label    = t.label,
-                    selected = t.label == state.selectedCaptionLabel,
+                    selected = t.matchesSelectedTrack(
+                        groupIndex = state.selectedCaptionGroupIndex,
+                        trackIndex = state.selectedCaptionTrackIndex
+                    ),
                     onClick  = { onAction(PlaybackContract.Action.SelectCaptionTrack(t)) }
                 )
             }
@@ -844,6 +742,11 @@ private fun TracksContent(
         }
     }
 }
+
+private fun TrackInfo.matchesSelectedTrack(
+    groupIndex: Int?,
+    trackIndex: Int?
+): Boolean = groupIndex == this.groupIndex && trackIndex == this.trackIndex
 
 @Composable
 private fun TrackGroup(
@@ -870,7 +773,13 @@ private fun TrackGroup(
                     TrackPill(label = autoLabel, selected = autoSelected, onClick = onAuto)
                 }
             }
-            item { Row { content() } }
+            item {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    content()
+                }
+            }
         }
     }
 }
@@ -889,7 +798,7 @@ private fun TrackPill(label: String, selected: Boolean, onClick: () -> Unit) {
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
+        horizontalArrangement = Arrangement.spacedBy(15.dp)
     ) {
         Text(label, color = text, fontSize = 12.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, softWrap = false)
         if (selected) {
@@ -988,54 +897,83 @@ private fun InfoTag(label: String, bg: Color = VaultElevated) {
 
 // ─── Custom Seek Bar (Canvas) ─────────────────────────────────────────────────
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun VaultSeekBar(
+fun VaultSeekBar(
     position: Long,
     duration: Long,
     buffered: Int,
     onSeek: (Long) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onSeekStart: () -> Unit = {},
+    onSeekEnd: () -> Unit = {}
 ) {
-    val red    = VaultRed
-    val buf    = Color.White.copy(alpha = 0.28f)
-    val track  = Color.White.copy(alpha = 0.14f)
+    var isDragging by remember { mutableStateOf(false) }
+    var dragFraction by remember { mutableFloatStateOf(0f) }
 
-    Canvas(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(26.dp)
-            .pointerInput(duration) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val ev  = awaitPointerEvent()
-                        val pos = ev.changes.firstOrNull()?.position ?: continue
-                        if (ev.changes.any { it.pressed } && duration > 0) {
-                            val frac = (pos.x / size.width).coerceIn(0f, 1f)
-                            onSeek((frac * duration).toLong())
-                        }
-                    }
-                }
+    val bufFrac = (buffered / 100f).coerceIn(0f, 1f)
+    val playedFrac = if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
+    val displayFrac = if (isDragging) dragFraction else playedFrac
+
+    Slider(
+        value = displayFrac,
+        onValueChange = { fraction ->
+            if (!isDragging) {
+                isDragging = true
+                onSeekStart()          // ← TELL PARENT "drag started"
             }
-    ) {
-        val trackH  = 4.dp.toPx()
-        val thumbR  = 8.dp.toPx()
-        val y       = size.height / 2f
-        val played  = if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
-        val bufFrac = (buffered / 100f).coerceIn(0f, 1f)
-
-        // Background
-        drawRoundRect(track, Offset(0f, y - trackH / 2), Size(size.width, trackH), CornerRadius(trackH / 2))
-        // Buffered
-        drawRoundRect(buf,   Offset(0f, y - trackH / 2), Size(size.width * bufFrac, trackH), CornerRadius(trackH / 2))
-        // Played
-        if (played > 0f) {
-            drawRoundRect(red, Offset(0f, y - trackH / 2), Size(size.width * played, trackH), CornerRadius(trackH / 2))
+            dragFraction = fraction
+        },
+        onValueChangeFinished = {
+            onSeek((dragFraction * duration).toLong())
+            isDragging = false
+            onSeekEnd()               // ← TELL PARENT "drag ended"
+        },
+        modifier = modifier.fillMaxWidth(),
+        thumb = {
+            val thumbSize by animateDpAsState(
+                targetValue = if (isDragging) 20.dp else 16.dp,
+                animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+                label = "thumbSize"
+            )
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(thumbSize)
+                    .clip(CircleShape)
+                    .background(VaultRed)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(thumbSize * 0.35f)
+                        .clip(CircleShape)
+                        .background(Color.White)
+                )
+            }
+        },
+        track = { sliderState ->
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(if (isDragging) 5.dp else 4.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(Color.White.copy(alpha = 0.14f))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(bufFrac)
+                        .fillMaxHeight()
+                        .background(Color.White.copy(alpha = 0.28f))
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(sliderState.value)
+                        .fillMaxHeight()
+                        .background(VaultRed)
+                )
+            }
         }
-        // Thumb
-        val tx = (size.width * played).coerceIn(thumbR, size.width - thumbR)
-        drawCircle(red,           thumbR,         Offset(tx, y))
-        drawCircle(Color.White,   thumbR * 0.35f, Offset(tx, y))
-    }
+    )
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1056,7 +994,7 @@ private fun formatDuration(ms: Long): String {
 @Composable
 private fun PortraitPreview() {
     AppTheme {
-        PortraitPlayerView(
+        LandscapeImmersivePlayer (
             state          = previewState,
             player         = null,
             video          = previewVideo,

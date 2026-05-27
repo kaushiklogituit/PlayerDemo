@@ -1,7 +1,7 @@
 package com.example.exoplayerdummy
 
 import android.os.Bundle
-import android.util.Log
+import com.example.exoplayerdummy.AppLogger as Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -30,8 +30,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Log.i(TAG, "onCreate")
+        Log.i(TAG, "onCreate(savedInstanceState=${savedInstanceState != null})")
         enableEdgeToEdge()
+        Log.d(TAG, "Edge-to-edge enabled; composing app content")
         setContent {
             AppTheme {
                 StreamPlayerApp(findVideo = findVideo)
@@ -65,8 +66,17 @@ private fun StreamPlayerApp(findVideo: FindVideoByIdUseCase) {
             route = "player/{videoId}",
             arguments = listOf(navArgument("videoId") { type = NavType.StringType })
         ) { backStackEntry ->
-            val videoId = backStackEntry.arguments?.getString("videoId") ?: return@composable
-            val video = remember(videoId) { findVideo(videoId) } ?: return@composable
+            val videoId = backStackEntry.arguments?.getString("videoId")
+            if (videoId == null) {
+                Log.e("StreamPlayerApp", "Player destination opened without a videoId")
+                return@composable
+            }
+            val video = remember(videoId) { findVideo(videoId) }
+            if (video == null) {
+                Log.e("StreamPlayerApp", "No catalog video found for route videoId=$videoId")
+                return@composable
+            }
+            Log.d("StreamPlayerApp", "Resolved route videoId=$videoId to title=${video.title}, protocol=${video.protocol}, live=${video.isLiveStream}")
 
             PlaybackRoot(
                 video = video,

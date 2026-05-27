@@ -1,6 +1,6 @@
 package com.example.exoplayerdummy.presentation.catalog
 
-import android.util.Log
+import com.example.exoplayerdummy.AppLogger as Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.exoplayerdummy.domain.usecase.GetVideoCatalogUseCase
@@ -26,27 +26,32 @@ class CatalogViewModel(
     val events = _events.receiveAsFlow()
 
     init {
+        Log.d(TAG, "Initialising catalog screen state")
         loadCatalog()
     }
 
     fun onAction(action: CatalogContract.Action) {
         when (action) {
             is CatalogContract.Action.OnVideoSelected -> {
-                Log.d(TAG, "Video selected: ${action.video.title}")
+                Log.d(TAG, "Video selected: id=${action.video.id}, title=${action.video.title}, protocol=${action.video.protocol}, live=${action.video.isLiveStream}")
                 viewModelScope.launch {
                     _events.send(CatalogContract.Event.NavigateToPlayer(action.video.id))
                 }
             }
-            CatalogContract.Action.OnRetry -> loadCatalog()
+            CatalogContract.Action.OnRetry -> {
+                Log.i(TAG, "Retry requested")
+                loadCatalog()
+            }
         }
     }
 
     private fun loadCatalog() {
         viewModelScope.launch {
+            Log.d(TAG, "Loading catalog")
             _state.update { it.copy(isLoading = true) }
             val videos = getVideoCatalog()
             _state.update { it.copy(videos = videos, isLoading = false) }
-            Log.d(TAG, "Catalog loaded: ${videos.size} items")
+            Log.d(TAG, "Catalog loaded: total=${videos.size}, live=${videos.count { it.isLiveStream }}, drm=${videos.count { it.protection != null }}")
         }
     }
 }

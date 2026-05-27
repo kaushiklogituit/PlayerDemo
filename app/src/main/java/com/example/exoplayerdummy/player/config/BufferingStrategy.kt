@@ -1,8 +1,10 @@
 package com.example.exoplayerdummy.player.config
 
-import android.util.Log
+import com.example.exoplayerdummy.AppLogger as Log
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 
+@UnstableApi
 object BufferingStrategy {
 
     private const val TAG = "BufferingStrategy"

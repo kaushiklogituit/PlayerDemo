@@ -1,6 +1,6 @@
 package com.example.exoplayerdummy.presentation.catalog
 
-import android.util.Log
+import com.example.exoplayerdummy.AppLogger as Log
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateFloatAsState
@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -314,8 +315,8 @@ private fun HeroPage(video: Video, onClick: () -> Unit) {
 
 @Composable
 private fun ContentRows(videos: List<Video>, onAction: (CatalogContract.Action) -> Unit) {
-    val liveVideos   = videos.filter { it.isLiveStream }
-    val vodVideos    = videos.filter { !it.isLiveStream }
+    val liveVideos = videos.filter { it.isLiveStream }
+    val vodVideos = videos.filter { !it.isLiveStream }
 
     if (liveVideos.isNotEmpty()) {
         RowSection(
@@ -329,25 +330,71 @@ private fun ContentRows(videos: List<Video>, onAction: (CatalogContract.Action) 
         Spacer(Modifier.height(28.dp))
     }
     if (vodVideos.isNotEmpty()) {
-        RowSection(
-            title = "ON DEMAND",
-            icon = Icons.Filled.VideoLibrary,
-            videos = vodVideos,
-            cardStyle = CardStyle.POSTER,
-            onAction = onAction
-        )
+        OnDemandSection(videos = vodVideos, onAction = onAction)
         Spacer(Modifier.height(28.dp))
     }
-    RowSection(
-        title = "ALL CONTENT",
-        icon = Icons.Filled.GridView,
-        videos = videos,
-        cardStyle = CardStyle.WIDE,
-        onAction = onAction
-    )
 }
 
 private enum class CardStyle { POSTER, LIVE, WIDE }
+
+private data class OnDemandCategory(
+    val title: String,
+    val icon: ImageVector,
+    val iconTint: Color,
+    val videos: List<Video>
+)
+
+@Composable
+private fun OnDemandSection(
+    videos: List<Video>,
+    onAction: (CatalogContract.Action) -> Unit
+) {
+    val categories = listOf(
+        OnDemandCategory(
+            title = "HLS",
+            icon = Icons.Filled.Stream,
+            iconTint = VaultRed,
+            videos = videos.filter { it.protocol == StreamProtocol.HLS && it.protection == null }
+        ),
+        OnDemandCategory(
+            title = "DASH",
+            icon = Icons.Filled.Dashboard,
+            iconTint = Color(0xFF6F8CFF),
+            videos = videos.filter { it.protocol == StreamProtocol.DASH && it.protection == null }
+        ),
+        OnDemandCategory(
+            title = "DRM",
+            icon = Icons.Filled.Lock,
+            iconTint = VaultGold,
+            videos = videos.filter { it.protection != null }
+        )
+    ).filter { it.videos.isNotEmpty() }
+
+    if (categories.isEmpty()) return
+
+    Column {
+        SectionHeader(
+            title = "ON DEMAND",
+            icon = Icons.Filled.VideoLibrary,
+            iconTint = VaultTextSecond,
+            bottomPadding = 14.dp
+        )
+        categories.forEachIndexed { index, category ->
+            RowSection(
+                title = category.title,
+                icon = category.icon,
+                iconTint = category.iconTint,
+                videos = category.videos,
+                cardStyle = CardStyle.POSTER,
+                onAction = onAction,
+                horizontalPadding = 28.dp
+            )
+            if (index != categories.lastIndex) {
+                Spacer(Modifier.height(22.dp))
+            }
+        }
+    }
+}
 
 @Composable
 private fun RowSection(
@@ -356,28 +403,21 @@ private fun RowSection(
     iconTint: Color = VaultTextSecond,
     videos: List<Video>,
     cardStyle: CardStyle,
-    onAction: (CatalogContract.Action) -> Unit
+    onAction: (CatalogContract.Action) -> Unit,
+    horizontalPadding: Dp = 20.dp
 ) {
     Column {
-        Row(
-            modifier = Modifier.padding(start = 20.dp, end = 16.dp, bottom = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(icon, null, tint = iconTint, modifier = Modifier.size(14.dp))
-            Spacer(Modifier.width(7.dp))
-            Text(
-                title,
-                color = VaultTextPrimary,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.ExtraBold,
-                letterSpacing = 2.sp
-            )
-        }
+        SectionHeader(
+            title = title,
+            icon = icon,
+            iconTint = iconTint,
+            horizontalPadding = horizontalPadding
+        )
         LazyRow(
-            contentPadding = PaddingValues(horizontal = 20.dp),
+            contentPadding = PaddingValues(horizontal = horizontalPadding),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            items(videos) { video ->
+            items(videos, key = { it.id }) { video ->
                 val onClick = {
                     Log.i(TAG, "Row tapped: ${video.title}")
                     onAction(CatalogContract.Action.OnVideoSelected(video))
@@ -392,7 +432,83 @@ private fun RowSection(
     }
 }
 
+@Composable
+private fun SectionHeader(
+    title: String,
+    icon: ImageVector,
+    iconTint: Color,
+    horizontalPadding: Dp = 20.dp,
+    bottomPadding: Dp = 12.dp
+) {
+    Row(
+        modifier = Modifier.padding(start = horizontalPadding, end = 16.dp, bottom = bottomPadding),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, null, tint = iconTint, modifier = Modifier.size(14.dp))
+        Spacer(Modifier.width(7.dp))
+        Text(
+            title,
+            color = VaultTextPrimary,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.ExtraBold,
+            letterSpacing = 2.sp
+        )
+    }
+}
+
 // ─── Card Variants ────────────────────────────────────────────────────────────
+
+@Composable
+private fun CardChip(
+    label: String,
+    backgroundColor: Color,
+    contentColor: Color
+) {
+    Text(
+        label,
+        color = contentColor,
+        fontSize = 8.sp,
+        fontWeight = FontWeight.ExtraBold,
+        letterSpacing = 0.5.sp,
+        modifier = Modifier
+            .background(backgroundColor, RoundedCornerShape(3.dp))
+            .padding(horizontal = 4.dp, vertical = 2.dp)
+    )
+}
+
+@Composable
+private fun CardBadgeRow(
+    video: Video,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (video.badge.isNotEmpty()) {
+            CardChip(
+                label = video.badge,
+                backgroundColor = VaultRed,
+                contentColor = VaultWhite
+            )
+        }
+        if (video.hasSubtitleTracks) {
+            CardChip(
+                label = "SUB",
+                backgroundColor = VaultElevated.copy(alpha = 0.92f),
+                contentColor = VaultBlue
+            )
+        }
+        if (video.hasAudioTracks) {
+            CardChip(
+                label = "AUD",
+                backgroundColor = VaultElevated.copy(alpha = 0.92f),
+                contentColor = VaultGreen
+            )
+        }
+    }
+}
 
 @Composable
 private fun PosterCard(video: Video, onClick: () -> Unit) {
@@ -436,20 +552,12 @@ private fun PosterCard(video: Video, onClick: () -> Unit) {
                 lineHeight = 14.sp
             )
         }
-        if (video.badge.isNotEmpty()) {
-            Text(
-                video.badge,
-                color = VaultWhite,
-                fontSize = 8.sp,
-                fontWeight = FontWeight.ExtraBold,
-                letterSpacing = 0.5.sp,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(6.dp)
-                    .background(VaultRed, RoundedCornerShape(3.dp))
-                    .padding(horizontal = 4.dp, vertical = 2.dp)
-            )
-        }
+        CardBadgeRow(
+            video = video,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(6.dp)
+        )
         // Overlay icons for DRM / ADS
         Row(
             modifier = Modifier
@@ -662,9 +770,9 @@ private fun CatalogLoadingPreview() {
 
 private val previewCaption = CaptionTrack("https://example.com/en.vtt", "text/vtt", "en", "English")
 private val previewVideos = listOf(
-    Video(id = "1", title = "Live Sports HD", description = "Live broadcast with DVR support.", streamUrl = "", protocol = StreamProtocol.HLS, isLiveStream = true, supportsDvr = true, badge = "LIVE"),
-    Video(id = "2", title = "HLS Adaptive Stream", description = "Multi-bitrate HLS with embedded subtitles.", streamUrl = "", protocol = StreamProtocol.HLS, badge = "HLS", captions = listOf(previewCaption)),
-    Video(id = "3", title = "DASH with Captions", description = "DASH stream with sideloaded WebVTT.", streamUrl = "", protocol = StreamProtocol.DASH, badge = "DASH", captions = listOf(previewCaption)),
+    Video(id = "1", title = "Live Sports HD", description = "Live broadcast with DVR support.", streamUrl = "", protocol = StreamProtocol.HLS, isLiveStream = true, supportsDvr = true, badge = "LIVE", hasAudioTracks = true),
+    Video(id = "2", title = "HLS Adaptive Stream", description = "Multi-bitrate HLS with embedded subtitles.", streamUrl = "", protocol = StreamProtocol.HLS, badge = "HLS", captions = listOf(previewCaption), hasSubtitleTracks = true, hasAudioTracks = true),
+    Video(id = "3", title = "DASH with Captions", description = "DASH stream with sideloaded WebVTT.", streamUrl = "", protocol = StreamProtocol.DASH, badge = "DASH", captions = listOf(previewCaption), hasSubtitleTracks = true),
     Video(id = "4", title = "DRM Protected VOD", description = "Widevine DASH with IMA pre-roll ads.", streamUrl = "", protocol = StreamProtocol.DASH, protection = ContentProtection(licenseUrl = ""), adsEnabled = true, badge = "DRM"),
     Video(id = "5", title = "Progressive MP4", description = "Direct MP4 file — no adaptive bitrate.", streamUrl = "", protocol = StreamProtocol.PROGRESSIVE, badge = "MP4"),
 )

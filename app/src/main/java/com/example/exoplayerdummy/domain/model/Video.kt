@@ -13,5 +13,7 @@ data class Video(
     val protection: ContentProtection? = null,
     val adsEnabled: Boolean = false,
     val adTagUri: String? = null,
-    val badge: String = ""
+    val badge: String = "",
+    val hasSubtitleTracks: Boolean = false,
+    val hasAudioTracks: Boolean = false
 )
